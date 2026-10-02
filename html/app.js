@@ -28,6 +28,7 @@ function renderHouses(houses) {
             <div>Cena: ${formatMoney(house.price)}</div>
             <div>Majitel: ${house.owner_name || 'Volné'}</div>
             <div>Stav: ${house.locked ? 'Zamčeno' : 'Odemčeno'}</div>
+            <div>Garáž: ${house.garage_enabled ? 'Ano' : 'Ne'}</div>
         `;
 
         const actions = document.createElement('div');
@@ -59,6 +60,24 @@ function renderHouses(houses) {
             body: JSON.stringify({ id: house.id })
         });
 
+        const garageBtn = document.createElement('button');
+        garageBtn.textContent = 'Garáž';
+        garageBtn.className = 'secondary';
+        garageBtn.onclick = () => fetch(`https://${GetParentResourceName()}/openGarage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+            body: JSON.stringify({ id: house.id })
+        });
+
+        const inventoryBtn = document.createElement('button');
+        inventoryBtn.textContent = 'Sklad';
+        inventoryBtn.className = 'secondary';
+        inventoryBtn.onclick = () => fetch(`https://${GetParentResourceName()}/openInventory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+            body: JSON.stringify({ id: house.id })
+        });
+
         const lockBtn = document.createElement('button');
         lockBtn.textContent = house.locked ? 'Odemknout' : 'Zamknout';
         lockBtn.className = 'danger';
@@ -71,6 +90,8 @@ function renderHouses(houses) {
         actions.appendChild(buyBtn);
         actions.appendChild(sellBtn);
         actions.appendChild(enterBtn);
+        actions.appendChild(garageBtn);
+        actions.appendChild(inventoryBtn);
         actions.appendChild(lockBtn);
 
         card.appendChild(name);

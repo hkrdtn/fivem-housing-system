@@ -1,31 +1,17 @@
-# Free VMS-styled Housing System
+# VMS-style Housing System
 
-## Co obsahuje
+## Co přidáváme
 
 - koupi / prodej nemovitostí
 - zámek domu
-- vstup do domu
+- garáž
+- domovní sklad / inventory
 - klíče a přístup
-- NUI menu
-- databázové tabulky
-- item `house_key`
-- příkaz `/houses`
-- SQL pro nastavení itemů a základních domů
+- NUI menu a ESX integrace
+- SQL tabulky pro domy, klíče, garáže a zásoby
 - vše v češtině
 
-## Instalace
-
-### 1. Vlož resource do `resources/fivem-housing-system`
-
-### 2. Přidej do `server.cfg`
-
-```cfg
-ensure esx-extended
-ensure mysql-async
-ensure fivem-housing-system
-```
-
-### 3. Spusť SQL
+## SQL
 
 ```sql
 CREATE TABLE IF NOT EXISTS `houses` (
@@ -46,6 +32,7 @@ CREATE TABLE IF NOT EXISTS `houses` (
     `garage_x` FLOAT NOT NULL,
     `garage_y` FLOAT NOT NULL,
     `garage_z` FLOAT NOT NULL,
+    `garage_enabled` TINYINT(1) NOT NULL DEFAULT 1,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -59,50 +46,51 @@ CREATE TABLE IF NOT EXISTS `house_keys` (
     UNIQUE KEY `unique_key` (`identifier`, `house_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `house_inventory` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `house_id` INT NOT NULL,
+    `item_name` VARCHAR(80) NOT NULL,
+    `item_count` INT NOT NULL DEFAULT 1,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `unique_house_item` (`house_id`, `item_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `house_vehicles` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `house_id` INT NOT NULL,
+    `owner_identifier` VARCHAR(60) NOT NULL,
+    `vehicle_model` VARCHAR(80) NOT NULL,
+    `vehicle_plate` VARCHAR(80) NOT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `unique_vehicle_key` (`house_id`, `vehicle_plate`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT INTO `items` (`name`, `label`, `weight`, `rare`, `can_remove`) VALUES
 ('house_key', 'Klíč od domu', 1, 0, 1)
 ON DUPLICATE KEY UPDATE `label` = VALUES(`label`);
 ```
 
-### 4. Příkazy
+## Příkazy
 
-- `/houses` – otevře NUI menu nehnutele
-- `/givehousekey` – přidá item `house_key`
-
-### 5. Restart serveru
-
-## DŮLEŽITÉ
-
-Tento script je vytvořený jako free VMS-style verze. Je inspirovaný stylem a funkcemi, ale neobsahuje originální komerční kód ani logo VMS.
+- `/houses` – otevře menu
+- `/givehousekey` – přidá klíč do inventáře
 
 ## Funkce
 
-✓ nákup nemovitosti
-✓ prodej nemovitosti
-✓ zámek domu
-✓ přístup do domu
-✓ uložení do MySQL
-✓ klíče
+✓ nákup domů
+✓ prodej domů
+✓ přístup / klíče
+✓ garáž
+✓ domovní sklad / inventory
 ✓ NUI menu
-✓ české texty
-✓ připravené sample domy
+✓ ESX kompatibilita
+✓ česky
 
-## Struktura resource
+## Instalace
 
-```txt
-fivem-housing-system/
-├── fxmanifest.lua
-├── config.lua
-├── client/
-│   └── main.lua
-├── server/
-│   ├── database.lua
-│   └── main.lua
-├── html/
-│   ├── index.html
-│   ├── style.css
-│   └── app.js
-├── README.md
-└── sql/
-    └── housing.sql
-```
+1. Vlož resource do `resources/fivem-housing-system`
+2. Přidej do `server.cfg`
+3. Spusť SQL
+4. Restart serveru

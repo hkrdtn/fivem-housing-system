@@ -1,28 +1,300 @@
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Housing System</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div id="app" class="hidden">
-        <div class="panel">
-            <div class="header">
-                <div>
-                    <div class="eyebrow">FREE VMS-STYLE</div>
-                    <h1>Nemovitosti</h1>
-                </div>
-                <button id="closeBtn">✕</button>
-            </div>
+local ESX = exports['es_extended']:getSharedObject()
 
-            <div class="content">
-                <div id="houseList" class="list"></div>
-            </div>
-        </div>
-    </div>
+local function notifyPlayer(src, msg)
+    TriggerClientEvent('housing:client:notify', src, msg)
+end
 
-    <script src="app.js"></script>
-</body>
-</html>
+local function getPlayerIdentifierFromSource(src)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then
+        return nil
+    end
+    return xPlayer.identifier
+end
+
+local function canAccessHouse(src, houseId, callback)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then
+        callback(false)
+        return
+    end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            callback(false)
+            return
+        end
+
+        if house.owner == xPlayer.identifier then
+            callback(true)
+            return
+        end
+
+        HasHouseAccess(xPlayer.identifier, houseId, function(access)
+            callback(access)
+        end)
+    end)
+end
+
+RegisterNetEvent('housing:server:getProperties', function()
+    local src = source
+    GetAllHouses(function(houses)
+        TriggerClientEvent('housing:client:syncHouses', src, houses)
+    end)
+end)
+
+RegisterNetEvent('housing:server:buyHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, 'Nemovitost neexistuje.')
+            return
+        end
+
+        if house.owner then
+            notifyPlayer(src, 'Tento dům už má vlastníka.')
+            return
+        end
+
+        local ownedCount = 0
+        GetAllHouses(function(allHouses)
+            for _, item in ipairs(allHouses) do
+                if item.owner == xPlayer.identifier then
+                    ownedCount = ownedCount + 1
+                end
+            end
+
+            if ownedCount >= Config.MaxOwnedHouses then
+                notifyPlayer(src, 'Již vlastníš maximální počet domů.')
+                return
+            end
+
+            if xPlayer.getMoney() < house.price then
+                notifyPlayer(src, 'Nemáš dostatek peněz.')
+                return
+            end
+
+            xPlayer.removeMoney(house.price)
+            SetHouseOwner(houseId, xPlayer.identifier, xPlayer.name, function()
+                GiveHouseKey(xPlayer.identifier, houseId)
+                notifyPlayer(src, 'Koupil jsi dům: ' .. house.name)
+                TriggerClientEvent('housing:server:getProperties', src)
+            end)
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:sellHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, 'Nemovitost neexistuje.')
+            return
+        end
+
+        if not house.owner or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, 'Nejsi majitelem tohoto domu.')
+            return
+        end
+
+        local sellPrice = math.floor(house.price * 0.7)
+        xPlayer.addMoney(sellPrice)
+        RemoveHouseKey(xPlayer.identifier, houseId)
+        ClearHouseOwner(houseId, function()
+            notifyPlayer(src, 'Prodal jsi dům za $' .. sellPrice)
+            TriggerClientEvent('housing:server:getProperties', src)
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:toggleLock', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        if not house.owner or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, 'Nejsi vlastníkem domu.')
+            return
+        end
+
+        ToggleHouseLock(houseId, function(newState)
+            notifyPlayer(src, newState and 'Dům byl uzamčen.' or 'Dům byl odemčen.')
+            TriggerClientEvent('housing:server:getProperties', src)
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:enterHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, 'Nemovitost nebyla nalezena.')
+            return
+        end
+
+        local ownerAllowed = house.owner == xPlayer.identifier
+        if house.locked and not ownerAllowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if access then
+                    TriggerClientEvent('housing:client:teleportToHouse', src, house, house.exit)
+                else
+                    notifyPlayer(src, 'Dům je zamčený, nemáš klíč.')
+                end
+            end)
+            return
+        end
+
+        TriggerClientEvent('housing:client:teleportToHouse', src, house, house.exit)
+    end)
+end)
+
+RegisterNetEvent('housing:server:openGarage', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        local allowed = house.owner == xPlayer.identifier
+        if not allowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if not access then
+                    notifyPlayer(src, 'Nemáš přístup do garáže.')
+                    return
+                end
+                GetHouseGarageVehicles(houseId, function(vehicles)
+                    local list = {}
+                    for _, vehicle in ipairs(vehicles) do
+                        list[#list + 1] = vehicle.model .. ' | ' .. vehicle.plate
+                    end
+                    TriggerClientEvent('housing:client:garageReply', src, { list = list })
+                end)
+            end)
+            return
+        end
+
+        GetHouseGarageVehicles(houseId, function(vehicles)
+            local list = {}
+            for _, vehicle in ipairs(vehicles) do
+                list[#list + 1] = vehicle.model .. ' | ' .. vehicle.plate
+            end
+            TriggerClientEvent('housing:client:garageReply', src, { list = list })
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:openInventory', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        local allowed = house.owner == xPlayer.identifier
+        if not allowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if not access then
+                    notifyPlayer(src, 'Nemáš přístup do skladu.')
+                    return
+                end
+                GetHouseInventory(houseId, function(items)
+                    local list = {}
+                    for _, item in ipairs(items) do
+                        list[#list + 1] = item.name .. ' x' .. item.count
+                    end
+                    TriggerClientEvent('housing:client:inventoryReply', src, { list = list })
+                end)
+            end)
+            return
+        end
+
+        GetHouseInventory(houseId, function(items)
+            local list = {}
+            for _, item in ipairs(items) do
+                list[#list + 1] = item.name .. ' x' .. item.count
+            end
+            TriggerClientEvent('housing:client:inventoryReply', src, { list = list })
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:depositItem', function(houseId, itemName, count)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    local countVal = tonumber(count) or 1
+    if not itemName or itemName == '' then return end
+
+    GetHouseById(houseId, function(house)
+        if not house or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, 'Pouze majitel může ukládat do skladu.')
+            return
+        end
+
+        local item = xPlayer.getInventoryItem(itemName)
+        if not item or item.count < countVal then
+            notifyPlayer(src, 'Nemáš dostatek položek.')
+            return
+        end
+
+        xPlayer.removeInventoryItem(itemName, countVal)
+        AddHouseInventoryItem(houseId, itemName, countVal)
+        notifyPlayer(src, 'Uložil jsi do skladu ' .. countVal .. 'x ' .. itemName)
+    end)
+end)
+
+RegisterNetEvent('housing:server:withdrawItem', function(houseId, itemName, count)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    local countVal = tonumber(count) or 1
+    if not itemName or itemName == '' then return end
+
+    GetHouseById(houseId, function(house)
+        if not house or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, 'Pouze majitel může vybrat ze skladu.')
+            return
+        end
+
+        GetHouseInventory(houseId, function(items)
+            local found = false
+            for _, item in ipairs(items) do
+                if item.name == itemName then
+                    found = true
+                    break
+                end
+            end
+
+            if not found then
+                notifyPlayer(src, 'Položka v domovním skladu neexistuje.')
+                return
+            end
+
+            RemoveHouseInventoryItem(houseId, itemName, countVal)
+            xPlayer.addInventoryItem(itemName, countVal)
+            notifyPlayer(src, 'Vybral jsi ze skladu ' .. countVal .. 'x ' .. itemName)
+        end)
+    end)
+end)
+
+RegisterCommand('givehousekey', function(source, args)
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+    xPlayer.addInventoryItem(Config.KeyItem, 1)
+    notifyPlayer(source, 'Přidal jsi si klíč od domu.')
+end, false)
+
+PrintDebug('Housing server loaded')

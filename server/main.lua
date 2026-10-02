@@ -20,12 +20,11 @@ local function initializeDatabase()
             `garage_x` FLOAT NOT NULL,
             `garage_y` FLOAT NOT NULL,
             `garage_z` FLOAT NOT NULL,
+            `garage_enabled` TINYINT(1) NOT NULL DEFAULT 1,
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function()
-        PrintDebug('Tabulka houses vytvořena')
-    end)
+    ]], {}, function() end)
 
     MySQL.Async.execute([[
         CREATE TABLE IF NOT EXISTS `house_keys` (
@@ -36,9 +35,32 @@ local function initializeDatabase()
             PRIMARY KEY (`id`),
             UNIQUE KEY `unique_key` (`identifier`, `house_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function()
-        PrintDebug('Tabulka house_keys vytvořena')
-    end)
+    ]], {}, function() end)
+
+    MySQL.Async.execute([[
+        CREATE TABLE IF NOT EXISTS `house_inventory` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `house_id` INT NOT NULL,
+            `item_name` VARCHAR(80) NOT NULL,
+            `item_count` INT NOT NULL DEFAULT 1,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `unique_house_item` (`house_id`, `item_name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ]], {}, function() end)
+
+    MySQL.Async.execute([[
+        CREATE TABLE IF NOT EXISTS `house_vehicles` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `house_id` INT NOT NULL,
+            `owner_identifier` VARCHAR(60) NOT NULL,
+            `vehicle_model` VARCHAR(80) NOT NULL,
+            `vehicle_plate` VARCHAR(80) NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `unique_vehicle_key` (`house_id`, `vehicle_plate`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ]], {}, function() end)
 end
 
 local function insertDefaultProperties()
@@ -48,7 +70,7 @@ local function insertDefaultProperties()
         end
 
         for _, prop in ipairs(Config.Properties) do
-            MySQL.Async.execute('INSERT INTO houses (name, price, owner_identifier, owner_name, locked, entrance_x, entrance_y, entrance_z, entrance_h, exit_x, exit_y, exit_z, exit_h, garage_x, garage_y, garage_z) VALUES (@name, @price, NULL, NULL, @locked, @ex, @ey, @ez, @eh, @sx, @sy, @sz, @sh, @gx, @gy, @gz)', {
+            MySQL.Async.execute('INSERT INTO houses (name, price, owner_identifier, owner_name, locked, entrance_x, entrance_y, entrance_z, entrance_h, exit_x, exit_y, exit_z, exit_h, garage_x, garage_y, garage_z, garage_enabled) VALUES (@name, @price, NULL, NULL, @locked, @ex, @ey, @ez, @eh, @sx, @sy, @sz, @sh, @gx, @gy, @gz, 1)', {
                 ['@name'] = prop.name,
                 ['@price'] = prop.price,
                 ['@locked'] = prop.locked and 1 or 0,
@@ -79,6 +101,7 @@ function GetAllHouses(callback)
                 owner = row.owner_identifier,
                 owner_name = row.owner_name,
                 locked = tonumber(row.locked) == 1,
+                garage_enabled = tonumber(row.garage_enabled) == 1,
                 entrance = { x = tonumber(row.entrance_x), y = tonumber(row.entrance_y), z = tonumber(row.entrance_z), h = tonumber(row.entrance_h) },
                 exit = { x = tonumber(row.exit_x), y = tonumber(row.exit_y), z = tonumber(row.exit_z), h = tonumber(row.exit_h) },
                 garage = { x = tonumber(row.garage_x), y = tonumber(row.garage_y), z = tonumber(row.garage_z) }
@@ -89,9 +112,7 @@ function GetAllHouses(callback)
 end
 
 function GetHouseById(houseId, callback)
-    MySQL.Async.fetchAll('SELECT * FROM houses WHERE id = @id LIMIT 1', {
-        ['@id'] = houseId
-    }, function(rows)
+    MySQL.Async.fetchAll('SELECT * FROM houses WHERE id = @id LIMIT 1', { ['@id'] = houseId }, function(rows)
         if rows and rows[1] then
             callback({
                 id = rows[1].id,
@@ -129,9 +150,7 @@ function ClearHouseOwner(houseId, callback)
 end
 
 function ToggleHouseLock(houseId, callback)
-    MySQL.Async.fetchScalar('SELECT locked FROM houses WHERE id = @id LIMIT 1', {
-        ['@id'] = houseId
-    }, function(value)
+    MySQL.Async.fetchScalar('SELECT locked FROM houses WHERE id = @id LIMIT 1', { ['@id'] = houseId }, function(value)
         local locked = tonumber(value) == 1
         MySQL.Async.execute('UPDATE houses SET locked = @locked WHERE id = @id', {
             ['@locked'] = locked and 0 or 1,
@@ -163,6 +182,74 @@ function HasHouseAccess(identifier, houseId, callback)
     }, function(count)
         callback(tonumber(count) > 0)
     end)
+end
+
+function GetHouseInventory(houseId, callback)
+    MySQL.Async.fetchAll('SELECT * FROM house_inventory WHERE house_id = @house_id ORDER BY item_name ASC', {
+        ['@house_id'] = houseId
+    }, function(rows)
+        local result = {}
+        for _, row in ipairs(rows or {}) do
+            result[#result + 1] = {
+                name = row.item_name,
+                count = tonumber(row.item_count)
+            }
+        end
+        callback(result)
+    end)
+end
+
+function AddHouseInventoryItem(houseId, itemName, itemCount)
+    MySQL.Async.execute('INSERT INTO house_inventory (house_id, item_name, item_count) VALUES (@house_id, @item_name, @item_count) ON DUPLICATE KEY UPDATE item_count = item_count + @item_count', {
+        ['@house_id'] = houseId,
+        ['@item_name'] = itemName,
+        ['@item_count'] = itemCount
+    })
+end
+
+function RemoveHouseInventoryItem(houseId, itemName, itemCount)
+    MySQL.Async.fetchScalar('SELECT item_count FROM house_inventory WHERE house_id = @house_id AND item_name = @item_name LIMIT 1', {
+        ['@house_id'] = houseId,
+        ['@item_name'] = itemName
+    }, function(current)
+        current = tonumber(current) or 0
+        if current <= itemCount then
+            MySQL.Async.execute('DELETE FROM house_inventory WHERE house_id = @house_id AND item_name = @item_name', {
+                ['@house_id'] = houseId,
+                ['@item_name'] = itemName
+            })
+        else
+            MySQL.Async.execute('UPDATE house_inventory SET item_count = item_count - @count WHERE house_id = @house_id AND item_name = @item_name', {
+                ['@count'] = itemCount,
+                ['@house_id'] = houseId,
+                ['@item_name'] = itemName
+            })
+        end
+    end)
+end
+
+function GetHouseGarageVehicles(houseId, callback)
+    MySQL.Async.fetchAll('SELECT * FROM house_vehicles WHERE house_id = @house_id ORDER BY vehicle_model ASC', {
+        ['@house_id'] = houseId
+    }, function(rows)
+        local result = {}
+        for _, row in ipairs(rows or {}) do
+            result[#result + 1] = {
+                model = row.vehicle_model,
+                plate = row.vehicle_plate
+            }
+        end
+        callback(result)
+    end)
+end
+
+function AddHouseVehicle(houseId, ownerIdentifier, model, plate)
+    MySQL.Async.execute('INSERT INTO house_vehicles (house_id, owner_identifier, vehicle_model, vehicle_plate) VALUES (@house_id, @owner, @model, @plate) ON DUPLICATE KEY UPDATE vehicle_model = @model', {
+        ['@house_id'] = houseId,
+        ['@owner'] = ownerIdentifier,
+        ['@model'] = model,
+        ['@plate'] = plate
+    })
 end
 
 initializeDatabase()

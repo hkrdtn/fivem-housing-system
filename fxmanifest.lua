@@ -2,8 +2,8 @@ fx_version 'cerulean'
 game 'gta5'
 
 author 'Copilot'
-description 'Free VMS-style FiveM Housing System with buy / sell / keys / garage / NUI'
-version '1.0.0'
+description 'VMS-style housing with buy/sell, garage and inventory management'
+version '1.1.0'
 
 lua54 'yes'
 

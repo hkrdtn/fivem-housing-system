@@ -1,6 +1,8 @@
 local ESX = exports['es_extended']:getSharedObject()
 
 local houses = {}
+local currentHouse = nil
+local insideHouse = false
 
 local function notify(msg)
     ESX.ShowNotification(msg)
@@ -46,23 +48,44 @@ RegisterNetEvent('housing:client:notify', function(message)
     notify(message)
 end)
 
-RegisterNetEvent('housing:client:teleportToHouse', function(property, destination)
+RegisterNetEvent('housing:client:teleportToHouse', function(property, destination, isInside)
     if not destination then return end
+
+    currentHouse = property
+    insideHouse = isInside == true
+
     SetEntityCoords(PlayerPedId(), destination.x, destination.y, destination.z, false, false, false, false)
     SetEntityHeading(PlayerPedId(), destination.h or 0.0)
     notify('Vstoupil jsi do domu: ' .. property.name)
 end)
 
+RegisterNetEvent('housing:client:leaveHouse', function(property, destination)
+    if not destination then return end
+
+    currentHouse = nil
+    insideHouse = false
+
+    SetEntityCoords(PlayerPedId(), destination.x, destination.y, destination.z, false, false, false, false)
+    SetEntityHeading(PlayerPedId(), destination.h or 0.0)
+    notify('Opustil jsi dům: ' .. (property and property.name or 'nemovitost'))
+end)
+
 RegisterNetEvent('housing:client:garageReply', function(data)
     if data and data.list then
-        local message = 'Garáž: ' .. table.concat(data.list, ', ') if #data.list == 0 then message = 'Garáž je prázdná.' end
+        local message = 'Garáž: ' .. table.concat(data.list, ', ')
+        if #data.list == 0 then
+            message = 'Garáž je prázdná.'
+        end
         notify(message)
     end
 end)
 
 RegisterNetEvent('housing:client:inventoryReply', function(data)
     if data and data.list then
-        local message = 'Sklad: ' .. table.concat(data.list, ', ') if #data.list == 0 then message = 'Sklad je prázdný.' end
+        local message = 'Sklad: ' .. table.concat(data.list, ', ')
+        if #data.list == 0 then
+            message = 'Sklad je prázdný.'
+        end
         notify(message)
     end
 end)
@@ -92,6 +115,11 @@ RegisterNUICallback('enterHouse', function(data, cb)
     cb({ ok = true })
 end)
 
+RegisterNUICallback('leaveHouse', function(data, cb)
+    TriggerServerEvent('housing:server:leaveHouse', tonumber(data.id))
+    cb({ ok = true })
+end)
+
 RegisterNUICallback('openGarage', function(data, cb)
     TriggerServerEvent('housing:server:openGarage', tonumber(data.id))
     cb({ ok = true })
@@ -102,19 +130,15 @@ RegisterNUICallback('openInventory', function(data, cb)
     cb({ ok = true })
 end)
 
-RegisterNuicallback('depositItem', function(data, cb)
+RegisterNUICallback('depositItem', function(data, cb)
     TriggerServerEvent('housing:server:depositItem', tonumber(data.id), tostring(data.itemName), tonumber(data.count or 1))
     cb({ ok = true })
 end)
 
-RegisterNuicallback('withdrawItem', function(data, cb)
+RegisterNUICallback('withdrawItem', function(data, cb)
     TriggerServerEvent('housing:server:withdrawItem', tonumber(data.id), tostring(data.itemName), tonumber(data.count or 1))
     cb({ ok = true })
 end)
-
-RegisterCommand(Config.Command, function()
-    openHousingMenu()
-end, false)
 
 RegisterCommand('houses', function()
     openHousingMenu()
@@ -127,6 +151,22 @@ CreateThread(function()
     while true do
         local ped = PlayerPedId()
         local coords = GetEntityCoords(ped)
+
+        if currentHouse and insideHouse then
+            local house = currentHouse
+            local exitPos = house.exit or house.entrance
+            local dist = GetDistance(coords, vector3(exitPos.x, exitPos.y, exitPos.z))
+
+            if dist < 25.0 then
+                DrawMarker(1, exitPos.x, exitPos.y, exitPos.z - 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.2, 1.2, 0.6, 255, 255, 255, 120, false, true, 2, false, nil, nil, false)
+                if dist < 2.0 then
+                    Draw3DText(exitPos.x, exitPos.y, exitPos.z + 1.2, '[E] Opustit dům')
+                    if IsControlJustPressed(0, 38) then
+                        TriggerServerEvent('housing:server:leaveHouse', house.id)
+                    end
+                end
+            end
+        end
 
         for _, property in ipairs(houses) do
             local entrance = property.entrance or { x = 0, y = 0, z = 0 }

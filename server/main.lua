@@ -1,257 +1,328 @@
-local MySQL = MySQL
+local ESX = exports['es_extended']:getSharedObject()
 
-local function initializeDatabase()
-    MySQL.Async.execute([[
-        CREATE TABLE IF NOT EXISTS `houses` (
-            `id` INT NOT NULL AUTO_INCREMENT,
-            `name` VARCHAR(80) NOT NULL,
-            `price` INT NOT NULL,
-            `owner_identifier` VARCHAR(60) DEFAULT NULL,
-            `owner_name` VARCHAR(80) DEFAULT NULL,
-            `locked` TINYINT(1) NOT NULL DEFAULT 1,
-            `entrance_x` FLOAT NOT NULL,
-            `entrance_y` FLOAT NOT NULL,
-            `entrance_z` FLOAT NOT NULL,
-            `entrance_h` FLOAT NOT NULL,
-            `exit_x` FLOAT NOT NULL,
-            `exit_y` FLOAT NOT NULL,
-            `exit_z` FLOAT NOT NULL,
-            `exit_h` FLOAT NOT NULL,
-            `garage_x` FLOAT NOT NULL,
-            `garage_y` FLOAT NOT NULL,
-            `garage_z` FLOAT NOT NULL,
-            `garage_enabled` TINYINT(1) NOT NULL DEFAULT 1,
-            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-
-    MySQL.Async.execute([[
-        CREATE TABLE IF NOT EXISTS `house_keys` (
-            `id` INT NOT NULL AUTO_INCREMENT,
-            `identifier` VARCHAR(60) NOT NULL,
-            `house_id` INT NOT NULL,
-            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_key` (`identifier`, `house_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-
-    MySQL.Async.execute([[
-        CREATE TABLE IF NOT EXISTS `house_inventory` (
-            `id` INT NOT NULL AUTO_INCREMENT,
-            `house_id` INT NOT NULL,
-            `item_name` VARCHAR(80) NOT NULL,
-            `item_count` INT NOT NULL DEFAULT 1,
-            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_house_item` (`house_id`, `item_name`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-
-    MySQL.Async.execute([[
-        CREATE TABLE IF NOT EXISTS `house_vehicles` (
-            `id` INT NOT NULL AUTO_INCREMENT,
-            `house_id` INT NOT NULL,
-            `owner_identifier` VARCHAR(60) NOT NULL,
-            `vehicle_model` VARCHAR(80) NOT NULL,
-            `vehicle_plate` VARCHAR(80) NOT NULL,
-            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_vehicle_key` (`house_id`, `vehicle_plate`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
+local function notifyPlayer(src, msg)
+    TriggerClientEvent('housing:client:notify', src, msg)
 end
 
-local function insertDefaultProperties()
-    MySQL.Async.fetchScalar('SELECT COUNT(*) FROM houses', {}, function(count)
-        if tonumber(count) > 0 then
+local function canAccessHouse(src, houseId, callback)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then
+        callback(false)
+        return
+    end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            callback(false)
             return
         end
 
-        for _, prop in ipairs(Config.Properties) do
-            MySQL.Async.execute('INSERT INTO houses (name, price, owner_identifier, owner_name, locked, entrance_x, entrance_y, entrance_z, entrance_h, exit_x, exit_y, exit_z, exit_h, garage_x, garage_y, garage_z, garage_enabled) VALUES (@name, @price, NULL, NULL, @locked, @ex, @ey, @ez, @eh, @sx, @sy, @sz, @sh, @gx, @gy, @gz, 1)', {
-                ['@name'] = prop.name,
-                ['@price'] = prop.price,
-                ['@locked'] = prop.locked and 1 or 0,
-                ['@ex'] = prop.entrance.x,
-                ['@ey'] = prop.entrance.y,
-                ['@ez'] = prop.entrance.z,
-                ['@eh'] = prop.entrance.h,
-                ['@sx'] = prop.exit.x,
-                ['@sy'] = prop.exit.y,
-                ['@sz'] = prop.exit.z,
-                ['@sh'] = prop.exit.h,
-                ['@gx'] = prop.garage.x,
-                ['@gy'] = prop.garage.y,
-                ['@gz'] = prop.garage.z
-            })
+        if house.owner == xPlayer.identifier then
+            callback(true)
+            return
         end
-    end)
-end
 
-function GetAllHouses(callback)
-    MySQL.Async.fetchAll('SELECT * FROM houses ORDER BY id ASC', {}, function(rows)
-        local result = {}
-        for _, row in ipairs(rows or {}) do
-            result[#result + 1] = {
-                id = row.id,
-                name = row.name,
-                price = tonumber(row.price),
-                owner = row.owner_identifier,
-                owner_name = row.owner_name,
-                locked = tonumber(row.locked) == 1,
-                garage_enabled = tonumber(row.garage_enabled) == 1,
-                entrance = { x = tonumber(row.entrance_x), y = tonumber(row.entrance_y), z = tonumber(row.entrance_z), h = tonumber(row.entrance_h) },
-                exit = { x = tonumber(row.exit_x), y = tonumber(row.exit_y), z = tonumber(row.exit_z), h = tonumber(row.exit_h) },
-                garage = { x = tonumber(row.garage_x), y = tonumber(row.garage_y), z = tonumber(row.garage_z) }
-            }
-        end
-        callback(result)
-    end)
-end
-
-function GetHouseById(houseId, callback)
-    MySQL.Async.fetchAll('SELECT * FROM houses WHERE id = @id LIMIT 1', { ['@id'] = houseId }, function(rows)
-        if rows and rows[1] then
-            callback({
-                id = rows[1].id,
-                name = rows[1].name,
-                price = tonumber(rows[1].price),
-                owner = rows[1].owner_identifier,
-                owner_name = rows[1].owner_name,
-                locked = tonumber(rows[1].locked) == 1,
-                entrance = { x = tonumber(rows[1].entrance_x), y = tonumber(rows[1].entrance_y), z = tonumber(rows[1].entrance_z), h = tonumber(rows[1].entrance_h) },
-                exit = { x = tonumber(rows[1].exit_x), y = tonumber(rows[1].exit_y), z = tonumber(rows[1].exit_z), h = tonumber(rows[1].exit_h) },
-                garage = { x = tonumber(rows[1].garage_x), y = tonumber(rows[1].garage_y), z = tonumber(rows[1].garage_z) }
-            })
-        else
-            callback(nil)
-        end
-    end)
-end
-
-function SetHouseOwner(houseId, identifier, ownerName, callback)
-    MySQL.Async.execute('UPDATE houses SET owner_identifier = @owner, owner_name = @owner_name WHERE id = @id', {
-        ['@owner'] = identifier,
-        ['@owner_name'] = ownerName,
-        ['@id'] = houseId
-    }, function(rows)
-        if callback then callback(rows) end
-    end)
-end
-
-function ClearHouseOwner(houseId, callback)
-    MySQL.Async.execute('UPDATE houses SET owner_identifier = NULL, owner_name = NULL, locked = 1 WHERE id = @id', {
-        ['@id'] = houseId
-    }, function(rows)
-        if callback then callback(rows) end
-    end)
-end
-
-function ToggleHouseLock(houseId, callback)
-    MySQL.Async.fetchScalar('SELECT locked FROM houses WHERE id = @id LIMIT 1', { ['@id'] = houseId }, function(value)
-        local locked = tonumber(value) == 1
-        MySQL.Async.execute('UPDATE houses SET locked = @locked WHERE id = @id', {
-            ['@locked'] = locked and 0 or 1,
-            ['@id'] = houseId
-        }, function(rows)
-            if callback then callback(not locked) end
+        HasHouseAccess(xPlayer.identifier, houseId, function(access)
+            callback(access)
         end)
     end)
 end
 
-function GiveHouseKey(identifier, houseId)
-    MySQL.Async.execute('INSERT INTO house_keys (identifier, house_id) VALUES (@identifier, @house_id) ON DUPLICATE KEY UPDATE house_id = house_id', {
-        ['@identifier'] = identifier,
-        ['@house_id'] = houseId
-    })
-end
-
-function RemoveHouseKey(identifier, houseId)
-    MySQL.Async.execute('DELETE FROM house_keys WHERE identifier = @identifier AND house_id = @house_id', {
-        ['@identifier'] = identifier,
-        ['@house_id'] = houseId
-    })
-end
-
-function HasHouseAccess(identifier, houseId, callback)
-    MySQL.Async.fetchScalar('SELECT COUNT(*) FROM house_keys WHERE identifier = @identifier AND house_id = @house_id', {
-        ['@identifier'] = identifier,
-        ['@house_id'] = houseId
-    }, function(count)
-        callback(tonumber(count) > 0)
+RegisterNetEvent('housing:server:getProperties', function()
+    local src = source
+    GetAllHouses(function(houses)
+        TriggerClientEvent('housing:client:syncHouses', src, houses)
     end)
-end
+end)
 
-function GetHouseInventory(houseId, callback)
-    MySQL.Async.fetchAll('SELECT * FROM house_inventory WHERE house_id = @house_id ORDER BY item_name ASC', {
-        ['@house_id'] = houseId
-    }, function(rows)
-        local result = {}
-        for _, row in ipairs(rows or {}) do
-            result[#result + 1] = {
-                name = row.item_name,
-                count = tonumber(row.item_count)
-            }
+RegisterNetEvent('housing:server:buyHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, '❌ Nemovitost neexistuje.')
+            return
         end
-        callback(result)
-    end)
-end
 
-function AddHouseInventoryItem(houseId, itemName, itemCount)
-    MySQL.Async.execute('INSERT INTO house_inventory (house_id, item_name, item_count) VALUES (@house_id, @item_name, @item_count) ON DUPLICATE KEY UPDATE item_count = item_count + @item_count', {
-        ['@house_id'] = houseId,
-        ['@item_name'] = itemName,
-        ['@item_count'] = itemCount
-    })
-end
-
-function RemoveHouseInventoryItem(houseId, itemName, itemCount)
-    MySQL.Async.fetchScalar('SELECT item_count FROM house_inventory WHERE house_id = @house_id AND item_name = @item_name LIMIT 1', {
-        ['@house_id'] = houseId,
-        ['@item_name'] = itemName
-    }, function(current)
-        current = tonumber(current) or 0
-        if current <= itemCount then
-            MySQL.Async.execute('DELETE FROM house_inventory WHERE house_id = @house_id AND item_name = @item_name', {
-                ['@house_id'] = houseId,
-                ['@item_name'] = itemName
-            })
-        else
-            MySQL.Async.execute('UPDATE house_inventory SET item_count = item_count - @count WHERE house_id = @house_id AND item_name = @item_name', {
-                ['@count'] = itemCount,
-                ['@house_id'] = houseId,
-                ['@item_name'] = itemName
-            })
+        if house.owner then
+            notifyPlayer(src, '❌ Tento dům už má vlastníka.')
+            return
         end
-    end)
-end
 
-function GetHouseGarageVehicles(houseId, callback)
-    MySQL.Async.fetchAll('SELECT * FROM house_vehicles WHERE house_id = @house_id ORDER BY vehicle_model ASC', {
-        ['@house_id'] = houseId
-    }, function(rows)
-        local result = {}
-        for _, row in ipairs(rows or {}) do
-            result[#result + 1] = {
-                model = row.vehicle_model,
-                plate = row.vehicle_plate
-            }
+        local ownedCount = 0
+        GetAllHouses(function(allHouses)
+            for _, item in ipairs(allHouses) do
+                if item.owner == xPlayer.identifier then
+                    ownedCount = ownedCount + 1
+                end
+            end
+
+            if ownedCount >= Config.MaxOwnedHouses then
+                notifyPlayer(src, '❌ Již vlastníš maximální počet domů.')
+                return
+            end
+
+            if xPlayer.getMoney() < house.price then
+                notifyPlayer(src, '❌ Nemáš dostatek peněz.')
+                return
+            end
+
+            xPlayer.removeMoney(house.price)
+            SetHouseOwner(houseId, xPlayer.identifier, xPlayer.name, function()
+                GiveHouseKey(xPlayer.identifier, houseId)
+                xPlayer.addInventoryItem('house_key', 1)
+                notifyPlayer(src, '✅ Koupil jsi dům: ' .. house.name .. ' za $' .. house.price)
+                TriggerClientEvent('housing:server:getProperties', src)
+                TriggerEvent('housing:server:log', xPlayer.name .. ' (' .. xPlayer.identifier .. ') koupil dům: ' .. house.name)
+            end)
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:sellHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, '❌ Nemovitost neexistuje.')
+            return
         end
-        callback(result)
+
+        if not house.owner or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, '❌ Nejsi majitelem tohoto domu.')
+            return
+        end
+
+        local sellPrice = math.floor(house.price * 0.7)
+        xPlayer.addMoney(sellPrice)
+        RemoveHouseKey(xPlayer.identifier, houseId)
+        xPlayer.removeInventoryItem('house_key', 1)
+        ClearHouseOwner(houseId, function()
+            notifyPlayer(src, '✅ Prodal jsi dům za $' .. sellPrice)
+            TriggerClientEvent('housing:server:getProperties', src)
+            TriggerEvent('housing:server:log', xPlayer.name .. ' (' .. xPlayer.identifier .. ') prodal dům: ' .. house.name)
+        end)
     end)
-end
+end)
 
-function AddHouseVehicle(houseId, ownerIdentifier, model, plate)
-    MySQL.Async.execute('INSERT INTO house_vehicles (house_id, owner_identifier, vehicle_model, vehicle_plate) VALUES (@house_id, @owner, @model, @plate) ON DUPLICATE KEY UPDATE vehicle_model = @model', {
-        ['@house_id'] = houseId,
-        ['@owner'] = ownerIdentifier,
-        ['@model'] = model,
-        ['@plate'] = plate
-    })
-end
+RegisterNetEvent('housing:server:toggleLock', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
 
-initializeDatabase()
-Wait(1000)
-insertDefaultProperties()
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        if not house.owner or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, '❌ Nejsi vlastníkem domu.')
+            return
+        end
+
+        ToggleHouseLock(houseId, function(newState)
+            notifyPlayer(src, newState and '🔒 Dům byl uzamčen.' or '🔓 Dům byl odemčen.')
+            TriggerClientEvent('housing:server:getProperties', src)
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:enterHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then
+            notifyPlayer(src, '❌ Nemovitost nebyla nalezena.')
+            return
+        end
+
+        local ownerAllowed = house.owner == xPlayer.identifier
+        if house.locked and not ownerAllowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if access then
+                    TriggerClientEvent('housing:client:teleportToHouse', src, house, house.exit, true)
+                else
+                    notifyPlayer(src, '❌ Dům je zamčený, nemáš klíč.')
+                end
+            end)
+            return
+        end
+
+        TriggerClientEvent('housing:client:teleportToHouse', src, house, house.exit, true)
+    end)
+end)
+
+RegisterNetEvent('housing:server:leaveHouse', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        TriggerClientEvent('housing:client:leaveHouse', src, house, house.entrance)
+    end)
+end)
+
+RegisterNetEvent('housing:server:openGarage', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        local allowed = house.owner == xPlayer.identifier
+        if not allowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if not access then
+                    notifyPlayer(src, '❌ Nemáš přístup do garáže.')
+                    return
+                end
+                GetHouseGarageVehicles(houseId, function(vehicles)
+                    local list = {}
+                    for _, vehicle in ipairs(vehicles) do
+                        list[#list + 1] = vehicle.model .. ' | ' .. vehicle.plate
+                    end
+                    TriggerClientEvent('housing:client:garageReply', src, { list = list })
+                end)
+            end)
+            return
+        end
+
+        GetHouseGarageVehicles(houseId, function(vehicles)
+            local list = {}
+            for _, vehicle in ipairs(vehicles) do
+                list[#list + 1] = vehicle.model .. ' | ' .. vehicle.plate
+            end
+            TriggerClientEvent('housing:client:garageReply', src, { list = list })
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:openInventory', function(houseId)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    GetHouseById(houseId, function(house)
+        if not house then return end
+        local allowed = house.owner == xPlayer.identifier
+        if not allowed then
+            HasHouseAccess(xPlayer.identifier, houseId, function(access)
+                if not access then
+                    notifyPlayer(src, '❌ Nemáš přístup do skladu.')
+                    return
+                end
+                GetHouseInventory(houseId, function(items)
+                    local list = {}
+                    for _, item in ipairs(items) do
+                        list[#list + 1] = item.name .. ' x' .. item.count
+                    end
+                    TriggerClientEvent('housing:client:inventoryReply', src, { list = list })
+                end)
+            end)
+            return
+        end
+
+        GetHouseInventory(houseId, function(items)
+            local list = {}
+            for _, item in ipairs(items) do
+                list[#list + 1] = item.name .. ' x' .. item.count
+            end
+            TriggerClientEvent('housing:client:inventoryReply', src, { list = list })
+        end)
+    end)
+end)
+
+RegisterNetEvent('housing:server:depositItem', function(houseId, itemName, count)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    local countVal = tonumber(count) or 1
+    if not itemName or itemName == '' then return end
+
+    GetHouseById(houseId, function(house)
+        if not house or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, '❌ Pouze majitel může ukládat do skladu.')
+            return
+        end
+
+        local item = xPlayer.getInventoryItem(itemName)
+        if not item or item.count < countVal then
+            notifyPlayer(src, '❌ Nemáš dostatek položek.')
+            return
+        end
+
+        xPlayer.removeInventoryItem(itemName, countVal)
+        AddHouseInventoryItem(houseId, itemName, countVal)
+        notifyPlayer(src, '✅ Uložil jsi do skladu ' .. countVal .. 'x ' .. itemName)
+    end)
+end)
+
+RegisterNetEvent('housing:server:withdrawItem', function(houseId, itemName, count)
+    local src = source
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    local countVal = tonumber(count) or 1
+    if not itemName or itemName == '' then return end
+
+    GetHouseById(houseId, function(house)
+        if not house or house.owner ~= xPlayer.identifier then
+            notifyPlayer(src, '❌ Pouze majitel může vybrat ze skladu.')
+            return
+        end
+
+        GetHouseInventory(houseId, function(items)
+            local found = false
+            for _, item in ipairs(items) do
+                if item.name == itemName then
+                    found = true
+                    break
+                end
+            end
+
+            if not found then
+                notifyPlayer(src, '❌ Položka v domovním skladu neexistuje.')
+                return
+            end
+
+            RemoveHouseInventoryItem(houseId, itemName, countVal)
+            xPlayer.addInventoryItem(itemName, countVal)
+            notifyPlayer(src, '✅ Vybral jsi ze skladu ' .. countVal .. 'x ' .. itemName)
+        end)
+    end)
+end)
+
+RegisterCommand('givehousekey', function(source, args)
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+    xPlayer.addInventoryItem('house_key', 1)
+    notifyPlayer(source, '✅ Přidal jsi si klíč od domu.')
+end, false)
+
+RegisterCommand('houses', function(source, args)
+    TriggerClientEvent('housing:client:openMenu', source)
+end, false)
+
+RegisterCommand('housesadmin', function(source, args)
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+    
+    if xPlayer.getGroup() == 'admin' or xPlayer.getGroup() == 'superadmin' then
+        GetAllHouses(function(houses)
+            print('^2Housing System Admin:^7')
+            for _, house in ipairs(houses) do
+                local owner = house.owner_name or 'Nikdo'
+                print('ID: ' .. house.id .. ' | Název: ' .. house.name .. ' | Majitel: ' .. owner .. ' | Cena: $' .. house.price)
+            end
+        end)
+    else
+        notifyPlayer(source, '❌ Nemáš oprávnění.')
+    end
+end, false)
+
+PrintDebug('Housing server loaded')
